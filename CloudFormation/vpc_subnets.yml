@@ -122,6 +122,22 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0ffdd9baf28dfa19b
+      InstanceType: t2.micro
+      SecurityGroupIds: [!Ref EC2SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo systemctl start app
 Outputs:
   VpcId:
     Description: "The VPC ID"
