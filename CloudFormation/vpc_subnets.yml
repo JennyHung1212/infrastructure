@@ -122,10 +122,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
-  EC2Instance:
+  EC2InstanceDev:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-0ffdd9baf28dfa19b
+      ImageId: ami-0b27df74ca6d6daff
       InstanceType: t2.micro
       SecurityGroupIds: [!Ref EC2SecurityGroup]
       BlockDeviceMappings:
@@ -154,3 +154,6 @@ Outputs:
   SecurityGroupId:
     Description: "EC2 Security Group Id for AMI"
     Value: !Ref EC2SecurityGroup
+  EC2InstanceId:
+    Description: "EC2 Instance ID"
+    Value: !Ref EC2InstanceDev
