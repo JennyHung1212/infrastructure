@@ -97,6 +97,47 @@ Resources:
     Properties:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: application
+      GroupDescription: Security group for webservice application
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 433
+          ToPort: 433
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  EC2InstanceDev:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0b27df74ca6d6daff
+      InstanceType: t2.micro
+      SecurityGroupIds: [!Ref EC2SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo systemctl start app
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -110,3 +151,9 @@ Outputs:
   Subnet3Id:
     Description: "Subnet 3 ID"
     Value: !Ref PublicSubnet3
+  SecurityGroupId:
+    Description: "EC2 Security Group Id for AMI"
+    Value: !Ref EC2SecurityGroup
+  EC2InstanceId:
+    Description: "EC2 Instance ID"
+    Value: !Ref EC2InstanceDev
