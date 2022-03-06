@@ -39,6 +39,11 @@ aws cloudformation update-stack --stack-name vpc --template-body file://CloudFor
 aws cloudformation update-stack --stack-name vpc --template-body file://CloudFormation/vpc_output.yml --parameters ParameterKey=VpcCidrBlock,ParameterValue="10.1.1.0/24"
 ```
 
+```bash
+# pass in ami as param
+aws cloudformation update-stack --stack-name vpc-dev-3 --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=AMI,ParameterValue="ami-093c9a5e49c75ae89"
+```
+
 ## Delete Stack
 
 ```bash
