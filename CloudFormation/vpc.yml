@@ -17,10 +17,26 @@ Parameters:
     Description: "CIDR block for Subnet 3"
     Type: String
     Default: "10.0.2.0/24"
+  PrivateSubnet1CIDR:
+    Description: "CIDR block for private Subnet 1"
+    Type: String
+    Default: "10.0.3.0/24"
+  PrivateSubnet2CIDR:
+    Description: "CIDR block for private Subnet 2"
+    Type: String
+    Default: "10.0.4.0/24"
+  PrivateSubnet3CIDR:
+    Description: "CIDR block for private Subnet 3"
+    Type: String
+    Default: "10.0.5.0/24"
   AMI:
     Description: "AMI ID"
     Type: String
     Default: ami-093c9a5e49c75ae89
+  S3BucketName:
+    Description: "Private S3 bucket name"
+    Type: String
+    Default: dev.jenny-hung.me
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -101,6 +117,75 @@ Resources:
     Properties:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ1)
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ2)
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet3CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ3)
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: NatGatewayEIP
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Routes
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet3
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -127,6 +212,21 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: database
+      GroupDescription: Security group for MySQL database
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+          Description: "Allow connections to a MySql DB instance"
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      VpcId: !Ref VPC
   EC2InstanceDev:
     Type: AWS::EC2::Instance
     DependsOn: InternetGatewayAttachment
@@ -145,6 +245,28 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           sudo systemctl start app
+  S3PrivateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}"
+              SSEAlgorithm: "aws:kms"
+      BucketName:
+        !Join [
+          ".",
+          [!Select [2, !Split ["/", !Ref AWS::StackId]], !Ref S3BucketName],
+        ]
+      LifecycleConfiguration:
+        Rules:
+          - Id: StandardIARule
+            Prefix: standard_ia
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -164,3 +286,12 @@ Outputs:
   EC2InstanceId:
     Description: "EC2 Instance ID"
     Value: !Ref EC2InstanceDev
+  PrivateSubnet1Id:
+    Description: "Private Subnet 1 ID"
+    Value: !Ref PrivateSubnet1
+  PrivateSubnet2Id:
+    Description: "Private Subnet 2 ID"
+    Value: !Ref PrivateSubnet2
+  PrivateSubnet3Id:
+    Description: "Private Subnet 3 ID"
+    Value: !Ref PrivateSubnet3
