@@ -229,7 +229,9 @@ Resources:
       VpcId: !Ref VPC
   EC2InstanceDev:
     Type: AWS::EC2::Instance
-    DependsOn: InternetGatewayAttachment
+    DependsOn:
+      - InternetGatewayAttachment
+      - IAMInstanceProfile
     Properties:
       ImageId: !Ref AMI
       InstanceType: t2.micro
@@ -241,10 +243,17 @@ Resources:
             VolumeSize: 20
             VolumeType: "gp2"
             DeleteOnTermination: true
+      IamInstanceProfile: !Ref IAMInstanceProfile
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          sudo systemctl start app
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            su - ec2-user -c "echo 'export S3_BUCKET_NAME=${S3PrivateBucket}' >> ~/.bash_profile"
+            su - ec2-user -c "echo 'export DB_USERNAME=csye6225' >> ~/.bash_profile"
+            su - ec2-user -c "echo 'export DB_PASSWORD=*passwordcsye6225' >> ~/.bash_profile" 
+            su - ec2-user -c "echo 'export DB_ENDPOINT=${DBEndpoint}'  >> ~/.bash_profile"
+            su - ec2-user -c "source ~/.bash_profile"
+          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
   S3PrivateBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -299,7 +308,7 @@ Resources:
       MultiAZ: false
       DBInstanceIdentifier: csye6225
       MasterUsername: csye6225
-      MasterUserPassword: "**85411Brainless"
+      MasterUserPassword: "*passwordcsye6225"
       DBSubnetGroupName: !Ref RDSSubnetGroup
       PubliclyAccessible: false
       DBName: CSYE6225
@@ -336,6 +345,13 @@ Resources:
             Action:
               - "sts:AssumeRole"
       RoleName: csye6225-s3
+  IAMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: ec2-instance-profile
+      Path: /
+      Roles:
+        - !Ref IAMRoleForS3
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -367,3 +383,6 @@ Outputs:
   S3PrivateBucket:
     Description: "S3 Private Bucket for Storing Users' Profile Pictures"
     Value: !Ref S3PrivateBucket
+  RDSInstanceEndpoint:
+    Description: "Endpoint of MySQL RDS Instance"
+    Value: !GetAtt RDSInstance.Endpoint.Address
