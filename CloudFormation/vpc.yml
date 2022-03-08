@@ -308,7 +308,34 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
-
+  IAMPolicyForS3:
+    Type: AWS::IAM::Policy
+    DependsOn: IAMRoleForS3
+    Properties:
+      PolicyName: csye6225-s3
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["s3:*"]
+            Effect: Allow
+            Resource:
+              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket]]
+              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket, "/*"]]
+      Roles: [!Ref IAMRoleForS3]
+  IAMRoleForS3:
+    Type: AWS::IAM::Role
+    Description: IAM role for accessing private s3 bucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: csye6225-s3
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -337,3 +364,6 @@ Outputs:
   PrivateSubnet3Id:
     Description: "Private Subnet 3 ID"
     Value: !Ref PrivateSubnet3
+  S3PrivateBucket:
+    Description: "S3 Private Bucket for Storing Users' Profile Pictures"
+    Value: !Ref S3PrivateBucket
