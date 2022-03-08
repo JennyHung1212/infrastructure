@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CSYE6225 Network Infrastructure
+Description: CSYE6225 Network and DB Infrastructure
 Parameters:
   VpcCIDR:
     Description: "CIDR block for VPC"
@@ -276,11 +276,11 @@ Resources:
             Transitions:
               - TransitionInDays: 30
                 StorageClass: STANDARD_IA
-  RDSParameterGroup:
+  RDSParamGroup:
     Type: AWS::RDS::DBParameterGroup
     Properties:
       Description: Parameter group for MySQL database
-      Family: mysql5.7
+      Family: mysql8.0
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
@@ -314,6 +314,7 @@ Resources:
       DBName: CSYE6225
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
+      DBParameterGroupName: !Ref RDSParamGroup
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
