@@ -214,6 +214,7 @@ Resources:
       VpcId: !Ref VPC
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DependsOn: EC2SecurityGroup
     Properties:
       GroupName: database
       GroupDescription: Security group for MySQL database
@@ -223,6 +224,7 @@ Resources:
           ToPort: 3306
           CidrIp: 0.0.0.0/0
           Description: "Allow connections to a MySql DB instance"
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
