@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CSYE6225 Network Infrastructure
+Description: CSYE6225 Network and DB Infrastructure
 Parameters:
   VpcCIDR:
     Description: "CIDR block for VPC"
@@ -17,10 +17,26 @@ Parameters:
     Description: "CIDR block for Subnet 3"
     Type: String
     Default: "10.0.2.0/24"
+  PrivateSubnet1CIDR:
+    Description: "CIDR block for private Subnet 1"
+    Type: String
+    Default: "10.0.6.0/24"
+  PrivateSubnet2CIDR:
+    Description: "CIDR block for private Subnet 2"
+    Type: String
+    Default: "10.0.7.0/24"
+  PrivateSubnet3CIDR:
+    Description: "CIDR block for private Subnet 3"
+    Type: String
+    Default: "10.0.8.0/24"
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-093c9a5e49c75ae89
+    Default: ami-086941de4500e0784
+  S3BucketName:
+    Description: "Private S3 bucket name"
+    Type: String
+    Default: dev.jenny-hung.me
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -101,6 +117,58 @@ Resources:
     Properties:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [3, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ1)
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [4, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ2)
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [5, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet3CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ3)
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Routes
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet3
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -127,9 +195,27 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  EC2InstanceDev:
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: EC2SecurityGroup
+    Properties:
+      GroupName: database
+      GroupDescription: Security group for MySQL database
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          Description: "Allow connections to a MySql DB instance"
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      VpcId: !Ref VPC
+  EC2Instance:
     Type: AWS::EC2::Instance
-    DependsOn: InternetGatewayAttachment
+    DependsOn:
+      - InternetGatewayAttachment
+      - IAMInstanceProfile
     Properties:
       ImageId: !Ref AMI
       InstanceType: t2.micro
@@ -141,10 +227,118 @@ Resources:
             VolumeSize: 20
             VolumeType: "gp2"
             DeleteOnTermination: true
+      IamInstanceProfile: !Ref IAMInstanceProfile
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          sudo systemctl start app
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            cd /etc/systemd/system/
+            sudo touch app.conf
+            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
+            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
+            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
+            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+            sudo systemctl daemon-reload
+            sudo systemctl start app
+          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
+  S3PrivateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: Private
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: "AES256"
+      BucketName:
+        !Join [
+          ".",
+          [!Select [2, !Split ["/", !Ref AWS::StackId]], !Ref S3BucketName],
+        ]
+      LifecycleConfiguration:
+        Rules:
+          - Id: StandardIARule
+            Prefix: standard_ia
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+  RDSParamGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Parameter group for MySQL database
+      Family: mysql8.0
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  RDSSubnetsGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription:
+        !Join ["", ["RDS Subnet Group for", !Ref AWS::StackName]]
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn:
+      - RDSSubnetsGroup
+      - RDSSecurityGroup
+    Properties:
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      Engine: mysql
+      MultiAZ: false
+      DBInstanceIdentifier: csye6225
+      MasterUsername: csye6225
+      MasterUserPassword: "*passwordcsye6225"
+      DBSubnetGroupName: !Ref RDSSubnetsGroup
+      PubliclyAccessible: false
+      DBName: CSYE6225
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBParameterGroupName: !Ref RDSParamGroup
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  IAMPolicyForS3:
+    Type: AWS::IAM::Policy
+    DependsOn: IAMRoleForS3
+    Properties:
+      PolicyName: csye6225-s3
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["s3:*"]
+            Effect: Allow
+            Resource:
+              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket]]
+              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket, "/*"]]
+      Roles: [!Ref IAMRoleForS3]
+  IAMRoleForS3:
+    Type: AWS::IAM::Role
+    Description: IAM role for accessing private s3 bucket
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: EC2-CSYE6225
+  IAMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: ec2-instance-profile
+      Path: /
+      Roles:
+        - !Ref IAMRoleForS3
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -163,4 +357,19 @@ Outputs:
     Value: !Ref EC2SecurityGroup
   EC2InstanceId:
     Description: "EC2 Instance ID"
-    Value: !Ref EC2InstanceDev
+    Value: !Ref EC2Instance
+  PrivateSubnet1Id:
+    Description: "Private Subnet 1 ID"
+    Value: !Ref PrivateSubnet1
+  PrivateSubnet2Id:
+    Description: "Private Subnet 2 ID"
+    Value: !Ref PrivateSubnet2
+  PrivateSubnet3Id:
+    Description: "Private Subnet 3 ID"
+    Value: !Ref PrivateSubnet3
+  S3PrivateBucket:
+    Description: "S3 Private Bucket for Storing Users' Profile Pictures"
+    Value: !Ref S3PrivateBucket
+  RDSInstanceEndpoint:
+    Description: "Endpoint of MySQL RDS Instance"
+    Value: !GetAtt RDSInstance.Endpoint.Address
