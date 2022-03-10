@@ -41,7 +41,7 @@ aws cloudformation update-stack --stack-name vpc --template-body file://CloudFor
 
 ```bash
 # pass in ami as param
-aws cloudformation update-stack --stack-name vpc-dev --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=AMI,ParameterValue="ami-093c9a5e49c75ae89"
+aws cloudformation update-stack --stack-name vpc-dev --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=AMI,ParameterValue="ami-0439554132109f852"
 ```
 
 ```bash

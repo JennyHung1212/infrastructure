@@ -20,19 +20,19 @@ Parameters:
   PrivateSubnet1CIDR:
     Description: "CIDR block for private Subnet 1"
     Type: String
-    Default: "10.0.3.0/24"
+    Default: "10.0.6.0/24"
   PrivateSubnet2CIDR:
     Description: "CIDR block for private Subnet 2"
     Type: String
-    Default: "10.0.4.0/24"
+    Default: "10.0.7.0/24"
   PrivateSubnet3CIDR:
     Description: "CIDR block for private Subnet 3"
     Type: String
-    Default: "10.0.5.0/24"
+    Default: "10.0.8.0/24"
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-093c9a5e49c75ae89
+    Default: ami-086941de4500e0784
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -121,7 +121,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !Select [3, !GetAZs ""]
       CidrBlock: !Ref PrivateSubnet1CIDR
       MapPublicIpOnLaunch: false
       Tags:
@@ -131,7 +131,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [1, !GetAZs ""]
+      AvailabilityZone: !Select [4, !GetAZs ""]
       CidrBlock: !Ref PrivateSubnet2CIDR
       MapPublicIpOnLaunch: false
       Tags:
@@ -141,23 +141,12 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [2, !GetAZs ""]
+      AvailabilityZone: !Select [5, !GetAZs ""]
       CidrBlock: !Ref PrivateSubnet3CIDR
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName} Private Subnet (AZ3)
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    DependsOn: NatGatewayEIP
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -165,12 +154,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${AWS::StackName} Private Routes
-  DefaultPrivateRoute1:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -222,14 +205,13 @@ Resources:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 0.0.0.0/0
           Description: "Allow connections to a MySql DB instance"
           SourceSecurityGroupId: !Ref EC2SecurityGroup
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  EC2InstanceDev:
+  EC2Instance:
     Type: AWS::EC2::Instance
     DependsOn:
       - InternetGatewayAttachment
@@ -250,11 +232,14 @@ Resources:
         Fn::Base64: !Sub
           - |
             #!/bin/bash
-            su - ec2-user -c "echo 'export S3_BUCKET_NAME=${S3PrivateBucket}' >> ~/.bash_profile"
-            su - ec2-user -c "echo 'export DB_USERNAME=csye6225' >> ~/.bash_profile"
-            su - ec2-user -c "echo 'export DB_PASSWORD=*passwordcsye6225' >> ~/.bash_profile" 
-            su - ec2-user -c "echo 'export DB_ENDPOINT=${DBEndpoint}'  >> ~/.bash_profile"
-            su - ec2-user -c "source ~/.bash_profile"
+            cd /etc/systemd/system/
+            sudo touch app.conf
+            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
+            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
+            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
+            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+            sudo systemctl daemon-reload
+            sudo systemctl start app
           - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
   S3PrivateBucket:
     Type: AWS::S3::Bucket
@@ -263,8 +248,7 @@ Resources:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
-              KMSMasterKeyID: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}"
-              SSEAlgorithm: "aws:kms"
+              SSEAlgorithm: "AES256"
       BucketName:
         !Join [
           ".",
@@ -286,7 +270,7 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
-  RDSSubnetGroup:
+  RDSSubnetsGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription:
@@ -301,7 +285,7 @@ Resources:
   RDSInstance:
     Type: AWS::RDS::DBInstance
     DependsOn:
-      - RDSSubnetGroup
+      - RDSSubnetsGroup
       - RDSSecurityGroup
     Properties:
       DBInstanceClass: db.t3.micro
@@ -311,7 +295,7 @@ Resources:
       DBInstanceIdentifier: csye6225
       MasterUsername: csye6225
       MasterUserPassword: "*passwordcsye6225"
-      DBSubnetGroupName: !Ref RDSSubnetGroup
+      DBSubnetGroupName: !Ref RDSSubnetsGroup
       PubliclyAccessible: false
       DBName: CSYE6225
       VPCSecurityGroups:
@@ -347,7 +331,7 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - "sts:AssumeRole"
-      RoleName: csye6225-s3
+      RoleName: EC2-CSYE6225
   IAMInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -373,7 +357,7 @@ Outputs:
     Value: !Ref EC2SecurityGroup
   EC2InstanceId:
     Description: "EC2 Instance ID"
-    Value: !Ref EC2InstanceDev
+    Value: !Ref EC2Instance
   PrivateSubnet1Id:
     Description: "Private Subnet 1 ID"
     Value: !Ref PrivateSubnet1
