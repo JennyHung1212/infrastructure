@@ -211,7 +211,7 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  EC2Instance:
+  EC2InstanceDev:
     Type: AWS::EC2::Instance
     DependsOn:
       - InternetGatewayAttachment
@@ -228,6 +228,7 @@ Resources:
             VolumeType: "gp2"
             DeleteOnTermination: true
       IamInstanceProfile: !Ref IAMInstanceProfile
+      KeyName: aws-dev-ec2
       UserData:
         Fn::Base64: !Sub
           - |
@@ -357,7 +358,7 @@ Outputs:
     Value: !Ref EC2SecurityGroup
   EC2InstanceId:
     Description: "EC2 Instance ID"
-    Value: !Ref EC2Instance
+    Value: !Ref EC2InstanceDev
   PrivateSubnet1Id:
     Description: "Private Subnet 1 ID"
     Value: !Ref PrivateSubnet1
