@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-086941de4500e0784
+    Default: ami-0241883f5c6e474a7
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
