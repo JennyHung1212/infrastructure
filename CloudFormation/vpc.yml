@@ -171,6 +171,7 @@ Resources:
       SubnetId: !Ref PrivateSubnet3
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
+    DependsOn: LoadBalancerSecurityGroup
     Properties:
       GroupName: application
       GroupDescription: Security group for webservice application
@@ -178,19 +179,11 @@ Resources:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 433
-          ToPort: 433
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
@@ -211,36 +204,24 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  EC2Instance:
-    Type: AWS::EC2::Instance
-    DependsOn:
-      - InternetGatewayAttachment
-      - IAMInstanceProfile
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      ImageId: !Ref AMI
-      InstanceType: t2.micro
-      SecurityGroupIds: [!Ref EC2SecurityGroup]
-      SubnetId: !Ref PublicSubnet1
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs:
-            VolumeSize: 20
-            VolumeType: "gp2"
-            DeleteOnTermination: true
-      IamInstanceProfile: !Ref IAMInstanceProfile
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            cd /etc/systemd/system/
-            sudo touch app.conf
-            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
-            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
-            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
-            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
-            sudo systemctl daemon-reload
-            sudo systemctl start app
-          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
+      GroupName: load balancer
+      GroupDescription: Security group for the load balancer to access the webservice EC2 instance
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 433
+          ToPort: 433
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      VpcId: !Ref VPC
   S3PrivateBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -339,25 +320,200 @@ Resources:
       Path: /
       Roles:
         - !Ref IAMRoleForS3
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    DependsOn: IAMInstanceProfile
+    Properties:
+      LaunchConfigurationName: asg_launch_config
+      AssociatePublicIpAddress: true
+      ImageId: !Ref AMI
+      InstanceType: t2.micro
+      KeyName: aws-dev-ec2
+      IamInstanceProfile: !Ref IAMInstanceProfile
+      SecurityGroups: [!Ref EC2SecurityGroup]
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            cd /etc/systemd/system/
+            sudo touch app.conf
+            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
+            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
+            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
+            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+            sudo systemctl daemon-reload
+            sudo systemctl start app
+          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+  WebserviceAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+      - LaunchConfiguration
+      - InternetGatewayAttachment
+    Properties:
+      AutoScalingGroupName: !Sub ${AWS::StackName}-asg
+      AvailabilityZones:
+        - us-east-1a
+        - us-east-1b
+        - us-east-1c
+      Cooldown: "300"
+      DesiredCapacity: "3"
+      HealthCheckGracePeriod: 90
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MaxSize: "5"
+      MinSize: "1"
+      NewInstancesProtectedFromScaleIn: true
+      Tags:
+        - Key: Application
+          Value: Webservice
+          PropagateAtLaunch: "true"
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-asg
+          PropagateAtLaunch: "true"
+      TargetGroupARNs:
+        - !Ref LoadBalancerTargetGroup
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+  ScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref WebserviceAutoScalingGroup
+      AdjustmentType: ChangeInCapacity
+      Cooldown: 60
+      ScalingAdjustment: 1
+  ScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref WebserviceAutoScalingGroup
+      AdjustmentType: ChangeInCapacity
+      Cooldown: 60
+      ScalingAdjustment: -1
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU > 5%
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 10
+      EvaluationPeriods: 1
+      Threshold: 5
+      AlarmActions:
+        - !Ref ScaleUpPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: WebserviceAutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU < 3%
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 10
+      EvaluationPeriods: 1
+      Threshold: 3
+      AlarmActions:
+        - !Ref ScaleDownPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: WebserviceAutoScalingGroup
+      ComparisonOperator: LessThanThreshold
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      IpAddressType: ipv4
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+      Name: !Sub ${AWS::StackName}-load-balancer
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+      Tags:
+        - Key: Application
+          Value: Webwervice
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-load-balancer
+      Type: application
+  LoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 90
+      HealthCheckPath: "/healthz"
+      HealthCheckPort: "8080"
+      HealthCheckProtocol: "HTTP"
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+      IpAddressType: ipv4
+      Name: !Sub ${AWS::StackName}-lb-tg
+      Port: 8080
+      Protocol: "HTTP"
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-lb-tg
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "20"
+      TargetType: instance
+      UnhealthyThresholdCount: 2
+      VpcId: !Ref VPC
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LoadBalancerTargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+  DNSforLoadBalancer:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneName: dev.jenny-hung.me.
+      Comment: Zone apex alias targeted to LoadBalancer
+      RecordSets:
+        - Name: dev.jenny-hung.me.
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt "LoadBalancer.CanonicalHostedZoneID"
+            DNSName: !GetAtt "LoadBalancer.DNSName"
 Outputs:
   VpcId:
     Description: "The VPC ID"
     Value: !Ref VPC
-  Subnet1Id:
+  PublicSubnet1Id:
     Description: "Subnet 1 ID"
     Value: !Ref PublicSubnet1
-  Subnet2Id:
+  PublicSubnet2Id:
     Description: "Subnet 2 ID"
     Value: !Ref PublicSubnet2
-  Subnet3Id:
+  PublicSubnet3Id:
     Description: "Subnet 3 ID"
     Value: !Ref PublicSubnet3
-  SecurityGroupId:
-    Description: "EC2 Security Group Id for AMI"
+  EC2SecurityGroupId:
+    Description: "EC2 Security Group ID for EC2 Instance"
     Value: !Ref EC2SecurityGroup
-  EC2InstanceId:
-    Description: "EC2 Instance ID"
-    Value: !Ref EC2Instance
+  RDSSecurityGroupId:
+    Description: "EC2 Security Group ID for RDS Instance"
+    Value: !Ref RDSSecurityGroup
+  LoadBalancerSecurityGroupGroupId:
+    Description: "EC2 Security Group ID for Load Balancer"
+    Value: !Ref LoadBalancerSecurityGroup
   PrivateSubnet1Id:
     Description: "Private Subnet 1 ID"
     Value: !Ref PrivateSubnet1
