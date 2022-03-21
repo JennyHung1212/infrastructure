@@ -32,11 +32,15 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-086941de4500e0784
+    Default: ami-0241883f5c6e474a7
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
     Default: dev.jenny-hung.me
+  EC2KeyName:
+    Description: "EC2 Key pair name"
+    Type: String
+    Default: aws-dev-ec2
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -179,7 +183,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
@@ -222,6 +226,37 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
+  EC2InstanceDev:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - InternetGatewayAttachment
+      - IAMInstanceProfile
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: t2.micro
+      SecurityGroupIds: [!Ref EC2SecurityGroup]
+      SubnetId: !Ref PublicSubnet1
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 20
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+      IamInstanceProfile: !Ref IAMInstanceProfile
+      KeyName: !Ref EC2KeyName
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            cd /etc/systemd/system/
+            sudo touch app.conf
+            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
+            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
+            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
+            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+            sudo systemctl daemon-reload
+            sudo systemctl start app
+          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
   S3PrivateBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -322,13 +357,15 @@ Resources:
         - !Ref IAMRoleForS3
   LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
-    DependsOn: IAMInstanceProfile
+    DependsOn:
+      - InternetGatewayAttachment
+      - IAMInstanceProfile
     Properties:
       LaunchConfigurationName: asg_launch_config
       AssociatePublicIpAddress: true
       ImageId: !Ref AMI
       InstanceType: t2.micro
-      KeyName: aws-dev-ec2
+      KeyName: !Ref EC2KeyName
       IamInstanceProfile: !Ref IAMInstanceProfile
       SecurityGroups: [!Ref EC2SecurityGroup]
       UserData:
@@ -368,7 +405,7 @@ Resources:
       LaunchConfigurationName: !Ref LaunchConfiguration
       MaxSize: "5"
       MinSize: "1"
-      NewInstancesProtectedFromScaleIn: true
+      NewInstancesProtectedFromScaleIn: false
       Tags:
         - Key: Application
           Value: Webservice
@@ -403,14 +440,14 @@ Resources:
       MetricName: CPUUtilization
       Namespace: AWS/EC2
       Statistic: Average
-      Period: 10
+      Period: 60
       EvaluationPeriods: 1
       Threshold: 5
       AlarmActions:
         - !Ref ScaleUpPolicy
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: WebserviceAutoScalingGroup
+          Value: !Ref WebserviceAutoScalingGroup
       ComparisonOperator: GreaterThanThreshold
   CPUAlarmLow:
     Type: AWS::CloudWatch::Alarm
@@ -419,14 +456,14 @@ Resources:
       MetricName: CPUUtilization
       Namespace: AWS/EC2
       Statistic: Average
-      Period: 10
+      Period: 60
       EvaluationPeriods: 1
       Threshold: 3
       AlarmActions:
         - !Ref ScaleDownPolicy
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: WebserviceAutoScalingGroup
+          Value: !Ref WebserviceAutoScalingGroup
       ComparisonOperator: LessThanThreshold
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -514,6 +551,9 @@ Outputs:
   LoadBalancerSecurityGroupGroupId:
     Description: "EC2 Security Group ID for Load Balancer"
     Value: !Ref LoadBalancerSecurityGroup
+  EC2InstanceId:
+    Description: "EC2 Instance ID"
+    Value: !Ref EC2InstanceDev
   PrivateSubnet1Id:
     Description: "Private Subnet 1 ID"
     Value: !Ref PrivateSubnet1
