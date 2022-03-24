@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-0241883f5c6e474a7
+    Default: ami-00f6ccd28ac3082b7
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -226,37 +226,6 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  EC2InstanceDev:
-    Type: AWS::EC2::Instance
-    DependsOn:
-      - InternetGatewayAttachment
-      - IAMInstanceProfile
-    Properties:
-      ImageId: !Ref AMI
-      InstanceType: t2.micro
-      SecurityGroupIds: [!Ref EC2SecurityGroup]
-      SubnetId: !Ref PublicSubnet1
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs:
-            VolumeSize: 20
-            VolumeType: "gp2"
-            DeleteOnTermination: true
-      IamInstanceProfile: !Ref IAMInstanceProfile
-      KeyName: !Ref EC2KeyName
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            cd /etc/systemd/system/
-            sudo touch app.conf
-            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
-            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
-            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
-            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
-            sudo systemctl daemon-reload
-            sudo systemctl start app
-          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
   S3PrivateBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -328,7 +297,7 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Action: ["s3:*"]
+          - Action: ["s3:*Object", "s3:ListBucket"]
             Effect: Allow
             Resource:
               - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket]]
@@ -387,13 +356,13 @@ Resources:
             VolumeSize: 20
             VolumeType: "gp2"
             DeleteOnTermination: true
-  WebserviceAutoScalingGroup:
+  WebappAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn:
       - LaunchConfiguration
       - InternetGatewayAttachment
     Properties:
-      AutoScalingGroupName: !Sub ${AWS::StackName}-asg
+      AutoScalingGroupName: !Sub ${AWS::StackName}_asg
       AvailabilityZones:
         - us-east-1a
         - us-east-1b
@@ -411,7 +380,7 @@ Resources:
           Value: Webservice
           PropagateAtLaunch: "true"
         - Key: Name
-          Value: !Sub ${AWS::StackName}-asg
+          Value: !Sub ${AWS::StackName}_asg
           PropagateAtLaunch: "true"
       TargetGroupARNs:
         - !Ref LoadBalancerTargetGroup
@@ -422,14 +391,14 @@ Resources:
   ScaleUpPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref WebserviceAutoScalingGroup
+      AutoScalingGroupName: !Ref WebappAutoScalingGroup
       AdjustmentType: ChangeInCapacity
       Cooldown: 60
       ScalingAdjustment: 1
   ScaleDownPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
-      AutoScalingGroupName: !Ref WebserviceAutoScalingGroup
+      AutoScalingGroupName: !Ref WebappAutoScalingGroup
       AdjustmentType: ChangeInCapacity
       Cooldown: 60
       ScalingAdjustment: -1
@@ -447,7 +416,7 @@ Resources:
         - !Ref ScaleUpPolicy
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: !Ref WebserviceAutoScalingGroup
+          Value: !Ref WebappAutoScalingGroup
       ComparisonOperator: GreaterThanThreshold
   CPUAlarmLow:
     Type: AWS::CloudWatch::Alarm
@@ -463,7 +432,7 @@ Resources:
         - !Ref ScaleDownPolicy
       Dimensions:
         - Name: AutoScalingGroupName
-          Value: !Ref WebserviceAutoScalingGroup
+          Value: !Ref WebappAutoScalingGroup
       ComparisonOperator: LessThanThreshold
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
@@ -551,9 +520,6 @@ Outputs:
   LoadBalancerSecurityGroupGroupId:
     Description: "EC2 Security Group ID for Load Balancer"
     Value: !Ref LoadBalancerSecurityGroup
-  EC2InstanceId:
-    Description: "EC2 Instance ID"
-    Value: !Ref EC2InstanceDev
   PrivateSubnet1Id:
     Description: "Private Subnet 1 ID"
     Value: !Ref PrivateSubnet1
