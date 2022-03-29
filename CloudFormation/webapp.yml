@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CSYE6225 Network and DB Infrastructure
+Description: CSYE6225 Network and DB Infrastructure for Webservice
 Parameters:
   VpcCIDR:
     Description: "CIDR block for VPC"
@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-00f6ccd28ac3082b7
+    Default: ami-04f127e0214f82c2d
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -41,6 +41,14 @@ Parameters:
     Description: "EC2 Key pair name"
     Type: String
     Default: aws-dev-ec2
+  CodeDeployAppName:
+    Description: CodeDeploy Application Name
+    Type: String
+    Default: "csye6225-webapp"
+  CodeDeployGroupName:
+    Description: CodeDeploy Deployment Group Name
+    Type: String
+    Default: "csye6225-webapp-deployment"
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -226,7 +234,7 @@ Resources:
         - Key: Name
           Value: !Ref AWS::StackName
       VpcId: !Ref VPC
-  S3PrivateBucket:
+  S3BucketForProfilePic:
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: Private
@@ -289,23 +297,40 @@ Resources:
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
-  IAMPolicyForS3:
+  IAMPolicyForS3ProfilePicBucket:
     Type: AWS::IAM::Policy
-    DependsOn: IAMRoleForS3
+    DependsOn: IAMRoleForCodeDeployEC2Service
     Properties:
-      PolicyName: csye6225-s3
+      PolicyName: CSYE6225-ProfilePic-EC2-S3
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Action: ["s3:*Object", "s3:ListBucket"]
             Effect: Allow
             Resource:
-              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket]]
-              - !Join ["", ["arn:aws:s3:::", !Ref S3PrivateBucket, "/*"]]
-      Roles: [!Ref IAMRoleForS3]
-  IAMRoleForS3:
+              - !Join ["", ["arn:aws:s3:::", !Ref S3BucketForProfilePic]]
+              - !Join ["", ["arn:aws:s3:::", !Ref S3BucketForProfilePic, "/*"]]
+      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
+  IAMPolicyForCodeDeployBucket:
+    Type: AWS::IAM::Policy
+    DependsOn: IAMRoleForCodeDeployEC2Service
+    Properties:
+      PolicyName: CSYE6225-CodeDeploy-EC2-S3
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["s3:Get*", "s3:List*"]
+            Effect: Allow
+            Resource:
+              - !Join ["", ["arn:aws:s3:::codedeploy.", !Ref S3BucketName]]
+              - !Join [
+                  "",
+                  ["arn:aws:s3:::codedeploy.", !Ref S3BucketName, "/*"],
+                ]
+      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
+  IAMRoleForCodeDeployEC2Service:
     Type: AWS::IAM::Role
-    Description: IAM role for accessing private s3 bucket
+    Description: IAM role for accessing private s3 bucket that stores CI/CD resources
     Properties:
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
@@ -316,14 +341,14 @@ Resources:
                 - ec2.amazonaws.com
             Action:
               - "sts:AssumeRole"
-      RoleName: EC2-CSYE6225
+      RoleName: CodeDeployEC2ServiceRole
   IAMInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       InstanceProfileName: ec2-instance-profile
       Path: /
       Roles:
-        - !Ref IAMRoleForS3
+        - !Ref IAMRoleForCodeDeployEC2Service
   LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
     DependsOn:
@@ -343,12 +368,13 @@ Resources:
             #!/bin/bash
             cd /etc/systemd/system/
             sudo touch app.conf
-            sudo echo 'S3_BUCKET_NAME=${S3PrivateBucket}' >> ./app.conf
+            sudo echo 'S3_BUCKET_NAME=${S3BucketForProfilePic}' >> ./app.conf
             sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
             sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
             sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
             sudo systemctl daemon-reload
             sudo systemctl start app
+            sudo service codedeploy-agent start
           - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
@@ -368,7 +394,7 @@ Resources:
         - us-east-1b
         - us-east-1c
       Cooldown: "300"
-      DesiredCapacity: "3"
+      DesiredCapacity: "2"
       HealthCheckGracePeriod: 90
       HealthCheckType: EC2
       LaunchConfigurationName: !Ref LaunchConfiguration
@@ -498,6 +524,49 @@ Resources:
           AliasTarget:
             HostedZoneId: !GetAtt "LoadBalancer.CanonicalHostedZoneID"
             DNSName: !GetAtt "LoadBalancer.DNSName"
+  IAMRoleForCodeDeploy:
+    Type: AWS::IAM::Role
+    Description: IAM role for CodeDeploy to call AWS services
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: CodeDeployServiceRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Ref CodeDeployAppName
+      ComputePlatform: Server
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    DependsOn: IAMRoleForCodeDeploy
+    Properties:
+      ApplicationName: !Ref CodeDeployAppName
+      DeploymentGroupName: !Ref CodeDeployGroupName
+      ServiceRoleArn: !GetAtt IAMRoleForCodeDeploy.Arn
+      DeploymentStyle:
+        DeploymentType: IN_PLACE
+        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      AutoRollbackConfiguration:
+        Enabled: "true"
+        Events:
+          - DEPLOYMENT_FAILURE
+      Ec2TagFilters:
+        - Key: Application
+          Value: Webservice
+          Type: KEY_AND_VALUE
+        - Key: Name
+          Value: !Sub ${AWS::StackName}_asg
+          Type: KEY_AND_VALUE
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -529,9 +598,18 @@ Outputs:
   PrivateSubnet3Id:
     Description: "Private Subnet 3 ID"
     Value: !Ref PrivateSubnet3
-  S3PrivateBucket:
+  S3BucketForProfilePic:
     Description: "S3 Private Bucket for Storing Users' Profile Pictures"
-    Value: !Ref S3PrivateBucket
+    Value: !Ref S3BucketForProfilePic
   RDSInstanceEndpoint:
     Description: "Endpoint of MySQL RDS Instance"
     Value: !GetAtt RDSInstance.Endpoint.Address
+  CodeDeployAppName:
+    Description: "CodeDeploy Application Name"
+    Value: !Ref CodeDeployApplication
+  IAMRoleForCodeDeployEC2Service:
+    Description: ARN of CodeDeployEC2ServiceRole
+    Value: !Ref IAMRoleForCodeDeployEC2Service
+  IAMRoleForCodeDeploy:
+    Description: ARN of CodeDeployServiceRole
+    Value: !Ref IAMRoleForCodeDeploy
