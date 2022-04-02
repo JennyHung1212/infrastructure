@@ -29,7 +29,7 @@ aws cloudformation create-stack --stack-name <stackName> --template-body file://
 
 ```bash
 # create a vpc with custom KeyName
-aws cloudformation create-stack --stack-name <stackName> --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=AMI,ParameterValue="ami-0241883f5c6e474a7" ParameterKey=EC2KeyName,ParameterValue="aws-demo-ec2
+aws cloudformation create-stack --stack-name webservice --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=S3BucketName,ParameterValue="prod.jenny-hung.me" ParameterKey=HostedZone,ParameterValue="prod.jenny-hung.me." ParameterKey=EC2KeyName,ParameterValue="aws-demo-ec2" --capabilities CAPABILITY_NAMED_IAM
 ```
 
 ## Update Stack

@@ -41,6 +41,10 @@ Parameters:
     Description: "EC2 Key pair name"
     Type: String
     Default: aws-dev-ec2
+  HostedZone:
+    Description: "Hosted zone for Load Balancer"
+    Type: String
+    Default: dev.jenny-hung.me.
   CodeDeployAppName:
     Description: CodeDeploy Application Name
     Type: String
@@ -516,10 +520,10 @@ Resources:
   DNSforLoadBalancer:
     Type: AWS::Route53::RecordSetGroup
     Properties:
-      HostedZoneName: dev.jenny-hung.me.
+      HostedZoneName: !Ref HostedZone
       Comment: Zone apex alias targeted to LoadBalancer
       RecordSets:
-        - Name: dev.jenny-hung.me.
+        - Name: !Ref HostedZone
           Type: A
           AliasTarget:
             HostedZoneId: !GetAtt "LoadBalancer.CanonicalHostedZoneID"
