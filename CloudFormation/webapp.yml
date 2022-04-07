@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-04f127e0214f82c2d
+    Default: ami-01ab5a1f49075eb6c
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -346,6 +346,9 @@ Resources:
             Action:
               - "sts:AssumeRole"
       RoleName: CodeDeployEC2ServiceRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
   IAMInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -379,6 +382,12 @@ Resources:
             sudo systemctl daemon-reload
             sudo systemctl start app
             sudo service codedeploy-agent start
+            sudo cp /home/ec2-user/cloudwatch-config.json /opt/cloudwatch-config.json
+            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+              -a fetch-config \
+              -m ec2 \
+              -c file:/opt/cloudwatch-config.json \
+              -s
           - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
