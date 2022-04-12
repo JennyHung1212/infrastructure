@@ -17,6 +17,10 @@ Parameters:
     Description: CodeDeploy Application Name
     Type: String
     Default: "csye6225-webapp"
+  CodeDeployAppNameLambda:
+    Description: CodeDeploy Application Name
+    Type: String
+    Default: "csye6225-webapp-lambda"
   IAMUserForGHAction:
     Description: IAM User for GitHub Action to Access S3, CodeDeploy and Build AMI
     Type: String
@@ -60,6 +64,17 @@ Resources:
                     !Ref CodeDeployAppName,
                   ],
                 ]
+              - !Join [
+                  "",
+                  [
+                    "arn:aws:codedeploy:",
+                    !Ref AWSRegion,
+                    ":",
+                    !Ref AWSAccountId,
+                    ":application:",
+                    !Ref CodeDeployAppNameLambda,
+                  ],
+                ]
           - Action: ["codedeploy:CreateDeployment", "codedeploy:GetDeployment"]
             Effect: Allow
             Resource: ["*"]
@@ -94,6 +109,16 @@ Resources:
                     ":",
                     !Ref AWSAccountId,
                     ":deploymentconfig:CodeDeployDefault.AllAtOnce",
+                  ],
+                ]
+              - !Join [
+                  "",
+                  [
+                    "arn:aws:codedeploy:",
+                    !Ref AWSRegion,
+                    ":",
+                    !Ref AWSAccountId,
+                    ":deploymentconfig:CodeDeployDefault.LambdaAllAtOnce",
                   ],
                 ]
       Users: [!Ref IAMUserForGHAction]
@@ -140,6 +165,17 @@ Resources:
                 "ec2:StopInstances",
                 "ec2:TerminateInstances",
               ]
+            Effect: Allow
+            Resource: "*"
+      Users: [!Ref IAMUserForGHAction]
+  GHUPdateLambdaFunction:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CSYE6225-GH-Update-Lambda-Function
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["lambda:UpdateFunctionCode", "lambda:DeleteFunction"]
             Effect: Allow
             Resource: "*"
       Users: [!Ref IAMUserForGHAction]

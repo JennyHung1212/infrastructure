@@ -53,6 +53,14 @@ Parameters:
     Description: CodeDeploy Deployment Group Name
     Type: String
     Default: "csye6225-webapp-deployment"
+  CodeDeployAppNameLambda:
+    Description: CodeDeploy Application Name
+    Type: String
+    Default: "csye6225-webapp-lambda"
+  CodeDeployGroupNameLambda:
+    Description: CodeDeploy Deployment Group Name
+    Type: String
+    Default: "csye6225-webapp-deployment-lambda"
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -317,7 +325,9 @@ Resources:
       Roles: [!Ref IAMRoleForCodeDeployEC2Service]
   IAMPolicyForCodeDeployBucket:
     Type: AWS::IAM::Policy
-    DependsOn: IAMRoleForCodeDeployEC2Service
+    DependsOn:
+      - IAMRoleForCodeDeployEC2Service
+      - IAMRoleForCodeDeployLambda
     Properties:
       PolicyName: CSYE6225-CodeDeploy-EC2-S3
       PolicyDocument:
@@ -331,7 +341,8 @@ Resources:
                   "",
                   ["arn:aws:s3:::codedeploy.", !Ref S3BucketName, "/*"],
                 ]
-      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
+      Roles:
+        [!Ref IAMRoleForCodeDeployEC2Service, !Ref IAMRoleForCodeDeployLambda]
   IAMRoleForCodeDeployEC2Service:
     Type: AWS::IAM::Role
     Description: IAM role for accessing private s3 bucket that stores CI/CD resources
@@ -580,6 +591,115 @@ Resources:
         - Key: Name
           Value: !Sub ${AWS::StackName}_asg
           Type: KEY_AND_VALUE
+  SNSForEmailVerification:
+    Type: "AWS::SNS::Topic"
+    Description: "SNS to trigger lambda functions on user registration"
+    Properties:
+      TopicName: csye6225-webapp-email-verification
+  IAMRoleForLambdaFunction:
+    Type: AWS::IAM::Role
+    Description: Execution rule to get permission to write logs to Amazon CloudWatch Logs
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: LambdaRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  IAMPolicyForLambdaSES:
+    Type: AWS::IAM::Policy
+    DependsOn: IAMRoleForLambdaFunction
+    Properties:
+      PolicyName: CSYE6225-Lambda-SES
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["ses:SendEmail", "ses:SendRawEmail"]
+            Effect: Allow
+            Resource: "*"
+      Roles: [!Ref IAMRoleForLambdaFunction]
+  IAMRoleForCodeDeployLambda:
+    Type: AWS::IAM::Role
+    Description: IAM role for CodeDeploy to call AWS services
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      RoleName: CodeDeployServiceRoleLambda
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRoleForLambda
+  CodeDeployApplicationLambda:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Ref CodeDeployAppNameLambda
+      ComputePlatform: Lambda
+  CodeDeployDeploymentGroupLambda:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    DependsOn: IAMRoleForCodeDeployLambda
+    Properties:
+      ApplicationName: !Ref CodeDeployAppNameLambda
+      DeploymentGroupName: !Ref CodeDeployGroupNameLambda
+      ServiceRoleArn: !GetAtt IAMRoleForCodeDeployLambda.Arn
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      DeploymentConfigName: CodeDeployDefault.LambdaAllAtOnce
+      AutoRollbackConfiguration:
+        Enabled: "true"
+        Events:
+          - DEPLOYMENT_FAILURE
+  LambdaFunctionForEmailVerification:
+    Type: AWS::Lambda::Function
+    DependsOn: IAMRoleForLambdaFunction
+    Properties:
+      Role: !GetAtt IAMRoleForLambdaFunction.Arn
+      Handler: index.handler
+      Runtime: nodejs14.x
+      Timeout: 30
+      FunctionName: csye6225-email-verification
+      Code:
+        ZipFile: |
+          const aws = require("aws-sdk");
+          const ses = new aws.SES({ region: "us-east-1" });
+          exports.handler = async function (event) {
+            const message = JSON.parse(event.Records[0].Sns.Message);
+            console.log("Message received from SNS:", message);
+            const { email, token } = message;
+            const params = {
+              Destination: {
+                ToAddresses: [email],
+              },
+              Message: {
+                Body: {
+                  Text: {
+                    Data: `Click the link below to verify your email address: http://dev.jenny-hung.me/v1/verifyUserEmail?email=${email}&token=${token}`,
+                  },
+                },
+                Subject: { Data: "Email Verification" },
+              },
+              Source: "noreply@dev.jenny-hung.me",
+            };
+            return ses.sendEmail(params).promise();
+          };
+  LFForEmailVerificationAlias:
+    Type: AWS::Lambda::Alias
+    DependsOn: LambdaFunctionForEmailVerification
+    Properties:
+      FunctionName: !Ref LambdaFunctionForEmailVerification
+      FunctionVersion: $LATEST
+      Name: !Join ["", [!Ref LambdaFunctionForEmailVerification, "-alias"]]
 Outputs:
   VpcId:
     Description: "The VPC ID"
@@ -622,7 +742,13 @@ Outputs:
     Value: !Ref CodeDeployApplication
   IAMRoleForCodeDeployEC2Service:
     Description: ARN of CodeDeployEC2ServiceRole
-    Value: !Ref IAMRoleForCodeDeployEC2Service
+    Value: !GetAtt IAMRoleForCodeDeployEC2Service.Arn
   IAMRoleForCodeDeploy:
     Description: ARN of CodeDeployServiceRole
-    Value: !Ref IAMRoleForCodeDeploy
+    Value: !GetAtt IAMRoleForCodeDeploy.Arn
+  IAMRoleForCodeDeployLambda:
+    Description: ARN of CodeDeployServiceRoleLambda
+    Value: !GetAtt IAMRoleForCodeDeployLambda.Arn
+  IAMRoleForLambdaFunction:
+    Description: ARN of LambdaRole
+    Value: !GetAtt IAMRoleForLambdaFunction.Arn
