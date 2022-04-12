@@ -29,7 +29,9 @@ aws cloudformation create-stack --stack-name <stackName> --template-body file://
 
 ```bash
 # create a vpc with custom KeyName
-aws cloudformation create-stack --stack-name webservice --template-body file://CloudFormation/vpc.yml --parameters ParameterKey=S3BucketName,ParameterValue="prod.jenny-hung.me" ParameterKey=HostedZone,ParameterValue="prod.jenny-hung.me." ParameterKey=EC2KeyName,ParameterValue="aws-demo-ec2" --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation create-stack --stack-name webservice --template-body file://CloudFormation/webapp.yml --parameters ParameterKey=S3BucketName,ParameterValue="prod.jenny-hung.me" ParameterKey=HostedZone,ParameterValue="prod.jenny-hung.me." ParameterKey=EC2KeyName,ParameterValue="aws-demo-ec2" --capabilities CAPABILITY_NAMED_IAM
+
+aws cloudformation create-stack --stack-name cicd-iam --template-body file://CloudFormation/cicd.yml --parameters ParameterKey=S3BucketForCodeDeploy,ParameterValue="codedeploy.prod.jenny-hung.me" ParameterKey=AWSAccountId,ParameterValue="854350110591" --capabilities CAPABILITY_NAMED_IAM
 ```
 
 ## Update Stack
@@ -53,6 +55,8 @@ aws cloudformation update-stack --stack-name vpc-dev --template-body file://Clou
 # update stack with IAM
 aws cloudformation update-stack --stack-name vpc-dev --template-body file://CloudFormation/vpc.yml --capabilities CAPABILITY_NAMED_IAM
 ```
+
+aws cloudformation update-stack --stack-name cicd-iam --template-body file://CloudFormation/cicd.yml --parameters ParameterKey=S3BucketForCodeDeploy,ParameterValue="codedeploy.prod.jenny-hung.me" ParameterKey=AWSAccountId,ParameterValue="854350110591" --capabilities CAPABILITY_NAMED_IAM
 
 ## Delete Stack
 
