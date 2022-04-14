@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-01ab5a1f49075eb6c
+    Default: ami-0c5fd672eae62cc29
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -343,6 +343,28 @@ Resources:
                 ]
       Roles:
         [!Ref IAMRoleForCodeDeployEC2Service, !Ref IAMRoleForCodeDeployLambda]
+  IAMPolicyForEC2ToPublishSNS:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CSYE6225-EC2-SNS
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["sns:Publish"]
+            Effect: Allow
+            Resource: !Ref SNSForEmailVerification
+      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
+  IAMPolicyForEC2DynamoDB:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CSYE6225-EC2-Dynamo
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["dynamodb:Get*", "dynamodb:List*", "dynamodb:PutItem"]
+            Effect: Allow
+            Resource: !GetAtt DynamoDBForOneTimeToken.Arn
+      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
   IAMRoleForCodeDeployEC2Service:
     Type: AWS::IAM::Role
     Description: IAM role for accessing private s3 bucket that stores CI/CD resources
@@ -390,6 +412,7 @@ Resources:
             sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
             sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
             sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+            sudo echo 'AWS_REGION=us-east-1'  >> ./app.conf
             sudo systemctl daemon-reload
             sudo systemctl start app
             sudo service codedeploy-agent start
@@ -596,6 +619,12 @@ Resources:
     Description: "SNS to trigger lambda functions on user registration"
     Properties:
       TopicName: csye6225-webapp-email-verification
+  SNSSubscriptionLambda:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SNSForEmailVerification
+      Protocol: LAMBDA
+      Endpoint: !GetAtt LambdaFunctionForEmailVerification.Arn
   IAMRoleForLambdaFunction:
     Type: AWS::IAM::Role
     Description: Execution rule to get permission to write logs to Amazon CloudWatch Logs
@@ -700,6 +729,30 @@ Resources:
       FunctionName: !Ref LambdaFunctionForEmailVerification
       FunctionVersion: $LATEST
       Name: !Join ["", [!Ref LambdaFunctionForEmailVerification, "-alias"]]
+  LambdaFunctionSNSTrigger:
+    Type: AWS::Lambda::Permission
+    DependsOn: LambdaFunctionForEmailVerification
+    Properties:
+      FunctionName: !Ref LambdaFunctionForEmailVerification
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SNSForEmailVerification
+  DynamoDBForOneTimeToken:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "csye6225_webapp"
+      AttributeDefinitions:
+        - AttributeName: "Email"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "Email"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
+      TimeToLiveSpecification:
+        AttributeName: "ExpireTime"
+        Enabled: true
 Outputs:
   VpcId:
     Description: "The VPC ID"
