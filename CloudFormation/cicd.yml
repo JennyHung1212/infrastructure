@@ -17,10 +17,18 @@ Parameters:
     Description: CodeDeploy Application Name
     Type: String
     Default: "csye6225-webapp"
-  IAMUserForGHAction:
+  CodeDeployAppNameLambda:
+    Description: CodeDeploy Application Name
+    Type: String
+    Default: "csye6225-webapp-lambda"
+  IAMUserForGHActionApp:
     Description: IAM User for GitHub Action to Access S3, CodeDeploy and Build AMI
     Type: String
     Default: "ghactions-app"
+  IAMUserForGHActionServerless:
+    Description: IAM User for GitHub Action to Access S3, CodeDeploy and Lambda
+    Type: String
+    Default: "ghactions-serverless"
 Resources:
   GHUploadToS3Policy:
     Type: AWS::IAM::Policy
@@ -34,7 +42,7 @@ Resources:
             Resource:
               - !Join ["", ["arn:aws:s3:::", !Ref S3BucketForCodeDeploy]]
               - !Join ["", ["arn:aws:s3:::", !Ref S3BucketForCodeDeploy, "/*"]]
-      Users: [!Ref IAMUserForGHAction]
+      Users: [!Ref IAMUserForGHActionApp, !Ref IAMUserForGHActionServerless]
   GHCodeDeployPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -58,6 +66,17 @@ Resources:
                     !Ref AWSAccountId,
                     ":application:",
                     !Ref CodeDeployAppName,
+                  ],
+                ]
+              - !Join [
+                  "",
+                  [
+                    "arn:aws:codedeploy:",
+                    !Ref AWSRegion,
+                    ":",
+                    !Ref AWSAccountId,
+                    ":application:",
+                    !Ref CodeDeployAppNameLambda,
                   ],
                 ]
           - Action: ["codedeploy:CreateDeployment", "codedeploy:GetDeployment"]
@@ -96,7 +115,17 @@ Resources:
                     ":deploymentconfig:CodeDeployDefault.AllAtOnce",
                   ],
                 ]
-      Users: [!Ref IAMUserForGHAction]
+              - !Join [
+                  "",
+                  [
+                    "arn:aws:codedeploy:",
+                    !Ref AWSRegion,
+                    ":",
+                    !Ref AWSAccountId,
+                    ":deploymentconfig:CodeDeployDefault.LambdaAllAtOnce",
+                  ],
+                ]
+      Users: [!Ref IAMUserForGHActionApp, !Ref IAMUserForGHActionServerless]
   GHEC2AMIPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -142,4 +171,20 @@ Resources:
               ]
             Effect: Allow
             Resource: "*"
-      Users: [!Ref IAMUserForGHAction]
+      Users: [!Ref IAMUserForGHActionApp]
+  GHUPdateLambdaFunction:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CSYE6225-GH-Update-Lambda-Function
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              [
+                "lambda:UpdateFunctionCode",
+                "lambda:DeleteFunction",
+                "lambda:CreateAlias",
+              ]
+            Effect: Allow
+            Resource: "*"
+      Users: [!Ref IAMUserForGHActionServerless]
