@@ -32,7 +32,7 @@ Parameters:
   AMI:
     Description: "AMI ID"
     Type: String
-    Default: ami-0c5fd672eae62cc29
+    Default: ami-0dbabf3a52898e145
   S3BucketName:
     Description: "Private S3 bucket name"
     Type: String
@@ -61,6 +61,14 @@ Parameters:
     Description: CodeDeploy Deployment Group Name
     Type: String
     Default: "csye6225-webapp-deployment-lambda"
+  ACMCertificate:
+    Description: ARN of ACM Certificate for HTTPS Listener
+    Type: String
+    Default: "arn:aws:acm:us-east-1:567984459938:certificate/46ae6b84-3932-4874-9250-8f7015cccecf"
+  AccountId:
+    Description: AWS Account ID
+    Type: String
+    Default: "567984459938"
 Resources:
   VPC:
     Type: AWS::EC2::VPC
@@ -242,6 +250,10 @@ Resources:
           FromPort: 433
           ToPort: 433
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
@@ -297,7 +309,7 @@ Resources:
       AllocatedStorage: 20
       Engine: mysql
       MultiAZ: false
-      DBInstanceIdentifier: csye6225
+      DBInstanceIdentifier: csye6225-db
       MasterUsername: csye6225
       MasterUserPassword: "*passwordcsye6225"
       DBSubnetGroupName: !Ref RDSSubnetsGroup
@@ -306,6 +318,8 @@ Resources:
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
       DBParameterGroupName: !Ref RDSParamGroup
+      KmsKeyId: !GetAtt KMSKeyForEncryptedRDS.Arn
+      StorageEncrypted: true
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
@@ -365,6 +379,17 @@ Resources:
             Effect: Allow
             Resource: !GetAtt DynamoDBForOneTimeToken.Arn
       Roles: [!Ref IAMRoleForCodeDeployEC2Service]
+  IAMPolicyForEC2ToUseKMSKey:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CSYE6225-EC2-KMS
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action: ["kms:*"]
+            Effect: Allow
+            Resource: !GetAtt KMSKeyForEncryptedEBS.Arn
+      Roles: [!Ref IAMRoleForCodeDeployEC2Service]
   IAMRoleForCodeDeployEC2Service:
     Type: AWS::IAM::Role
     Description: IAM role for accessing private s3 bucket that stores CI/CD resources
@@ -389,50 +414,63 @@ Resources:
       Path: /
       Roles:
         - !Ref IAMRoleForCodeDeployEC2Service
-  LaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     DependsOn:
       - InternetGatewayAttachment
+      - KMSKeyForEncryptedEBS
       - IAMInstanceProfile
     Properties:
-      LaunchConfigurationName: asg_launch_config
-      AssociatePublicIpAddress: true
-      ImageId: !Ref AMI
-      InstanceType: t2.micro
-      KeyName: !Ref EC2KeyName
-      IamInstanceProfile: !Ref IAMInstanceProfile
-      SecurityGroups: [!Ref EC2SecurityGroup]
-      UserData:
-        Fn::Base64: !Sub
-          - |
-            #!/bin/bash
-            cd /etc/systemd/system/
-            sudo touch app.conf
-            sudo echo 'S3_BUCKET_NAME=${S3BucketForProfilePic}' >> ./app.conf
-            sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
-            sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
-            sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
-            sudo echo 'AWS_REGION=us-east-1'  >> ./app.conf
-            sudo systemctl daemon-reload
-            sudo systemctl start app
-            sudo service codedeploy-agent start
-            sudo cp /home/ec2-user/cloudwatch-config.json /opt/cloudwatch-config.json
-            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-              -a fetch-config \
-              -m ec2 \
-              -c file:/opt/cloudwatch-config.json \
-              -s
-          - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
-      BlockDeviceMappings:
-        - DeviceName: /dev/xvda
-          Ebs:
-            VolumeSize: 20
-            VolumeType: "gp2"
+      LaunchTemplateName: asg-lt
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 20
+              VolumeType: "gp2"
+              DeleteOnTermination: false
+              Encrypted: true
+              KmsKeyId: !GetAtt KMSKeyForEncryptedEBS.Arn
+        IamInstanceProfile:
+          Arn: !GetAtt IAMInstanceProfile.Arn
+        ImageId: !Ref AMI
+        InstanceType: t2.micro
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            Groups:
+              - !Ref EC2SecurityGroup
             DeleteOnTermination: true
+        KeyName: !Ref EC2KeyName
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              sudo mkdir /var/mysql-certs
+              cd /var/mysql-certs
+              curl -O https://truststore.pki.rds.amazonaws.com/us-east-1/us-east-1-bundle.pem
+              keytool -import -file /var/mysql-certs/us-east-1-bundle.pem -alias CA_ALIAS -keystore /etc/cacerts
+              cd /etc/systemd/system/
+              sudo touch app.conf
+              sudo echo 'S3_BUCKET_NAME=${S3BucketForProfilePic}' >> ./app.conf
+              sudo echo 'DB_USERNAME=csye6225' >> ./app.conf
+              sudo echo 'DB_PASSWORD=*passwordcsye6225' >> ./app.conf
+              sudo echo 'DB_ENDPOINT=${DBEndpoint}'  >> ./app.conf
+              sudo echo 'AWS_REGION=us-east-1'  >> ./app.conf
+              sudo systemctl daemon-reload
+              sudo systemctl start app
+              sudo service codedeploy-agent start
+              sudo cp /home/ec2-user/cloudwatch-config.json /opt/cloudwatch-config.json
+              sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+                -a fetch-config \
+                -m ec2 \
+                -c file:/opt/cloudwatch-config.json \
+                -s
+            - DBEndpoint: !GetAtt RDSInstance.Endpoint.Address
   WebappAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn:
-      - LaunchConfiguration
+      - LaunchTemplate
       - InternetGatewayAttachment
     Properties:
       AutoScalingGroupName: !Sub ${AWS::StackName}_asg
@@ -441,10 +479,9 @@ Resources:
         - us-east-1b
         - us-east-1c
       Cooldown: "300"
-      DesiredCapacity: "2"
+      DesiredCapacity: "1"
       HealthCheckGracePeriod: 90
       HealthCheckType: EC2
-      LaunchConfigurationName: !Ref LaunchConfiguration
       MaxSize: "5"
       MinSize: "1"
       NewInstancesProtectedFromScaleIn: false
@@ -461,6 +498,9 @@ Resources:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
         - !Ref PublicSubnet3
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
   ScaleUpPolicy:
     Type: AWS::AutoScaling::ScalingPolicy
     Properties:
@@ -551,15 +591,32 @@ Resources:
       TargetType: instance
       UnhealthyThresholdCount: 2
       VpcId: !Ref VPC
-  LoadBalancerListener:
+  LoadBalancerHTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: "redirect"
+          RedirectConfig:
+            Protocol: "HTTPS"
+            Port: 443
+            Host: "#{host}"
+            Path: "/#{path}"
+            Query: "#{query}"
+            StatusCode: "HTTP_301"
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+  LoadBalancerHTTPSListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref LoadBalancerTargetGroup
       LoadBalancerArn: !Ref LoadBalancer
-      Port: 80
-      Protocol: HTTP
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref ACMCertificate
   DNSforLoadBalancer:
     Type: AWS::Route53::RecordSetGroup
     Properties:
@@ -753,6 +810,55 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: "ExpireTime"
         Enabled: true
+  KMSKeyForEncryptedEBS:
+    Type: AWS::KMS::Key
+    DependsOn: IAMRoleForCodeDeployEC2Service
+    Properties:
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: key-default-ebs
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Allow service-linked role use of the customer managed key
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+          - Sid: Allow service-linked role use of the customer managed key
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+            Action:
+              - "kms:CreateGrant"
+            Resource: "*"
+            Condition:
+              Bool:
+                kms:GrantIsForAWSResource: true
+  KMSKeyForEncryptedRDS:
+    Type: AWS::KMS::Key
+    DependsOn: IAMRoleForCodeDeployEC2Service
+    Properties:
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: key-default-rds
+        Statement:
+          - Sid: Enable IAM policies
+            Effect: Allow
+            Principal:
+              AWS: !Join ["", ["arn:aws:iam::", !Ref AccountId, ":root"]]
+            Action: "kms:*"
+            Resource: "*"
 Outputs:
   VpcId:
     Description: "The VPC ID"
