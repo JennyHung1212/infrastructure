@@ -63,3 +63,9 @@ aws cloudformation update-stack --stack-name cicd-iam --template-body file://Clo
 ```bash
 aws cloudformation delete-stack --stack-name <stackName>
 ```
+
+## import-certificate command
+
+```bash
+aws acm import-certificate --certificate fileb://prod_jenny-hung_me.crt --private-key fileb://prod_jenny-hung_me.key --certificate-chain fileb://prod_jenny-hung_me.ca-bundle
+```
